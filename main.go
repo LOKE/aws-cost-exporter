@@ -22,7 +22,7 @@ var (
 			Name: "aws_daily_cost_usd",
 			Help: "Daily AWS cost in USD",
 		},
-		[]string{"service"},
+		[]string{"service", "region"},
 	)
 )
 
@@ -58,6 +58,10 @@ func (e *CostExporter) updateMetrics(ctx context.Context) error {
 				Type: types.GroupDefinitionTypeDimension,
 				Key:  &[]string{string(types.DimensionService)}[0],
 			},
+			{
+				Type: types.GroupDefinitionTypeDimension,
+				Key:  &[]string{string(types.DimensionRegion)}[0],
+			},
 		},
 	}
 
@@ -70,12 +74,13 @@ func (e *CostExporter) updateMetrics(ctx context.Context) error {
 
 	for _, resultByTime := range result.ResultsByTime {
 		for _, group := range resultByTime.Groups {
-			if len(group.Keys) > 0 {
+			if len(group.Keys) >= 2 {
 				service := group.Keys[0]
+				region := group.Keys[1]
 				if cost, ok := group.Metrics["UnblendedCost"]; ok && cost.Amount != nil {
 					amount, err := strconv.ParseFloat(*cost.Amount, 64)
 					if err == nil {
-						awsCostGauge.WithLabelValues(service).Set(amount)
+						awsCostGauge.WithLabelValues(service, region).Set(amount)
 					}
 				}
 			}
