@@ -198,7 +198,14 @@ func (e *CostExporter) startMetricsUpdater(ctx context.Context) {
 func main() {
 	ctx := context.Background()
 
-	cfg, err := config.LoadDefaultConfig(ctx)
+	// Load AWS config with region fallback
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = "us-east-1" // Default region
+		log.Printf("AWS_REGION not set, using default region: %s", region)
+	}
+
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {
 		log.Fatalf("Failed to load AWS config: %v", err)
 	}
