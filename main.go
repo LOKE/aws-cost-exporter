@@ -65,80 +65,26 @@ func NewCostExporter(client *costexplorer.Client) *CostExporter {
 	return &CostExporter{client: client}
 }
 
-func (e *CostExporter) updateDailyMetrics(ctx context.Context) error {
-	now := time.Now()
-	yesterday := now.AddDate(0, 0, -1)
-	
-	start := yesterday.Format("2006-01-02")
-	end := now.Format("2006-01-02")
-
-	log.Printf("Fetching daily cost data from %s to %s", start, end)
-
-	costInput := &costexplorer.GetCostAndUsageInput{
-		TimePeriod: &types.DateInterval{
-			Start: &start,
-			End:   &end,
-		},
-		Granularity: types.GranularityDaily,
-		Metrics:     []string{"UnblendedCost"},
-		GroupBy: []types.GroupDefinition{
-			{
-				Type: types.GroupDefinitionTypeDimension,
-				Key:  &[]string{string(types.DimensionService)}[0],
-			},
-			{
-				Type: types.GroupDefinitionTypeDimension,
-				Key:  &[]string{string(types.DimensionRegion)}[0],
-			},
-		},
-	}
-
-	result, err := e.client.GetCostAndUsage(ctx, costInput)
-	if err != nil {
-		log.Printf("Failed to fetch daily cost data from AWS Cost Explorer: %v", err)
-		return fmt.Errorf("failed to get daily cost and usage: %w", err)
-	}
-
-	log.Printf("Received %d daily result periods from AWS Cost Explorer", len(result.ResultsByTime))
-
-	awsCostGauge.Reset()
-
-	metricsCount := 0
-	for _, resultByTime := range result.ResultsByTime {
-		for _, group := range resultByTime.Groups {
-			if len(group.Keys) >= 2 {
-				service := group.Keys[0]
-				region := group.Keys[1]
-				if cost, ok := group.Metrics["UnblendedCost"]; ok && cost.Amount != nil {
-					amount, err := strconv.ParseFloat(*cost.Amount, 64)
-					if err == nil {
-						awsCostGauge.WithLabelValues(service, region).Set(amount)
-						metricsCount++
-					}
-				}
-			}
-		}
-	}
-
-	log.Printf("Updated %d daily cost metrics for period %s to %s", metricsCount, start, end)
-	return nil
+type CostMetricConfig struct {
+	Name        string
+	Start       time.Time
+	End         time.Time
+	Granularity types.Granularity
+	Gauge       *prometheus.GaugeVec
 }
 
-func (e *CostExporter) updateMonthlyMetrics(ctx context.Context) error {
-	now := time.Now()
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	
-	start := startOfMonth.Format("2006-01-02")
-	end := now.Format("2006-01-02")
+func (e *CostExporter) updateCostMetrics(ctx context.Context, config CostMetricConfig) error {
+	start := config.Start.Format("2006-01-02")
+	end := config.End.Format("2006-01-02")
 
-	log.Printf("Fetching monthly cost data from %s to %s", start, end)
+	log.Printf("Fetching %s cost data from %s to %s", config.Name, start, end)
 
 	costInput := &costexplorer.GetCostAndUsageInput{
 		TimePeriod: &types.DateInterval{
 			Start: &start,
 			End:   &end,
 		},
-		Granularity: types.GranularityMonthly,
+		Granularity: config.Granularity,
 		Metrics:     []string{"UnblendedCost"},
 		GroupBy: []types.GroupDefinition{
 			{
@@ -154,13 +100,13 @@ func (e *CostExporter) updateMonthlyMetrics(ctx context.Context) error {
 
 	result, err := e.client.GetCostAndUsage(ctx, costInput)
 	if err != nil {
-		log.Printf("Failed to fetch monthly cost data from AWS Cost Explorer: %v", err)
-		return fmt.Errorf("failed to get monthly cost and usage: %w", err)
+		log.Printf("Failed to fetch %s cost data from AWS Cost Explorer: %v", config.Name, err)
+		return fmt.Errorf("failed to get %s cost and usage: %w", config.Name, err)
 	}
 
-	log.Printf("Received %d monthly result periods from AWS Cost Explorer", len(result.ResultsByTime))
+	log.Printf("Received %d %s result periods from AWS Cost Explorer", len(result.ResultsByTime), config.Name)
 
-	awsMonthlyCostGauge.Reset()
+	config.Gauge.Reset()
 
 	metricsCount := 0
 	for _, resultByTime := range result.ResultsByTime {
@@ -171,7 +117,7 @@ func (e *CostExporter) updateMonthlyMetrics(ctx context.Context) error {
 				if cost, ok := group.Metrics["UnblendedCost"]; ok && cost.Amount != nil {
 					amount, err := strconv.ParseFloat(*cost.Amount, 64)
 					if err == nil {
-						awsMonthlyCostGauge.WithLabelValues(service, region).Set(amount)
+						config.Gauge.WithLabelValues(service, region).Set(amount)
 						metricsCount++
 					}
 				}
@@ -179,146 +125,48 @@ func (e *CostExporter) updateMonthlyMetrics(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("Updated %d monthly cost metrics for period %s to %s", metricsCount, start, end)
-	return nil
-}
-
-func (e *CostExporter) updatePreviousDayMetrics(ctx context.Context) error {
-	now := time.Now()
-	twoDaysAgo := now.AddDate(0, 0, -2)
-	yesterday := now.AddDate(0, 0, -1)
-	
-	start := twoDaysAgo.Format("2006-01-02")
-	end := yesterday.Format("2006-01-02")
-
-	log.Printf("Fetching previous day cost data from %s to %s", start, end)
-
-	costInput := &costexplorer.GetCostAndUsageInput{
-		TimePeriod: &types.DateInterval{
-			Start: &start,
-			End:   &end,
-		},
-		Granularity: types.GranularityDaily,
-		Metrics:     []string{"UnblendedCost"},
-		GroupBy: []types.GroupDefinition{
-			{
-				Type: types.GroupDefinitionTypeDimension,
-				Key:  &[]string{string(types.DimensionService)}[0],
-			},
-			{
-				Type: types.GroupDefinitionTypeDimension,
-				Key:  &[]string{string(types.DimensionRegion)}[0],
-			},
-		},
-	}
-
-	result, err := e.client.GetCostAndUsage(ctx, costInput)
-	if err != nil {
-		log.Printf("Failed to fetch previous day cost data from AWS Cost Explorer: %v", err)
-		return fmt.Errorf("failed to get previous day cost and usage: %w", err)
-	}
-
-	log.Printf("Received %d previous day result periods from AWS Cost Explorer", len(result.ResultsByTime))
-
-	awsPreviousDayCostGauge.Reset()
-
-	metricsCount := 0
-	for _, resultByTime := range result.ResultsByTime {
-		for _, group := range resultByTime.Groups {
-			if len(group.Keys) >= 2 {
-				service := group.Keys[0]
-				region := group.Keys[1]
-				if cost, ok := group.Metrics["UnblendedCost"]; ok && cost.Amount != nil {
-					amount, err := strconv.ParseFloat(*cost.Amount, 64)
-					if err == nil {
-						awsPreviousDayCostGauge.WithLabelValues(service, region).Set(amount)
-						metricsCount++
-					}
-				}
-			}
-		}
-	}
-
-	log.Printf("Updated %d previous day cost metrics for period %s to %s", metricsCount, start, end)
-	return nil
-}
-
-func (e *CostExporter) updatePreviousMonthMetrics(ctx context.Context) error {
-	now := time.Now()
-	// Get the first day of the previous month
-	firstDayOfCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	firstDayOfPreviousMonth := firstDayOfCurrentMonth.AddDate(0, -1, 0)
-	
-	start := firstDayOfPreviousMonth.Format("2006-01-02")
-	end := firstDayOfCurrentMonth.Format("2006-01-02")
-
-	log.Printf("Fetching previous month cost data from %s to %s", start, end)
-
-	costInput := &costexplorer.GetCostAndUsageInput{
-		TimePeriod: &types.DateInterval{
-			Start: &start,
-			End:   &end,
-		},
-		Granularity: types.GranularityMonthly,
-		Metrics:     []string{"UnblendedCost"},
-		GroupBy: []types.GroupDefinition{
-			{
-				Type: types.GroupDefinitionTypeDimension,
-				Key:  &[]string{string(types.DimensionService)}[0],
-			},
-			{
-				Type: types.GroupDefinitionTypeDimension,
-				Key:  &[]string{string(types.DimensionRegion)}[0],
-			},
-		},
-	}
-
-	result, err := e.client.GetCostAndUsage(ctx, costInput)
-	if err != nil {
-		log.Printf("Failed to fetch previous month cost data from AWS Cost Explorer: %v", err)
-		return fmt.Errorf("failed to get previous month cost and usage: %w", err)
-	}
-
-	log.Printf("Received %d previous month result periods from AWS Cost Explorer", len(result.ResultsByTime))
-
-	awsPreviousMonthCostGauge.Reset()
-
-	metricsCount := 0
-	for _, resultByTime := range result.ResultsByTime {
-		for _, group := range resultByTime.Groups {
-			if len(group.Keys) >= 2 {
-				service := group.Keys[0]
-				region := group.Keys[1]
-				if cost, ok := group.Metrics["UnblendedCost"]; ok && cost.Amount != nil {
-					amount, err := strconv.ParseFloat(*cost.Amount, 64)
-					if err == nil {
-						awsPreviousMonthCostGauge.WithLabelValues(service, region).Set(amount)
-						metricsCount++
-					}
-				}
-			}
-		}
-	}
-
-	log.Printf("Updated %d previous month cost metrics for period %s to %s", metricsCount, start, end)
+	log.Printf("Updated %d %s cost metrics for period %s to %s", metricsCount, config.Name, start, end)
 	return nil
 }
 
 func (e *CostExporter) updateMetrics(ctx context.Context) error {
-	if err := e.updateDailyMetrics(ctx); err != nil {
-		return err
+	now := time.Now()
+	
+	configs := []CostMetricConfig{
+		{
+			Name:        "daily",
+			Start:       now.AddDate(0, 0, -1),
+			End:         now,
+			Granularity: types.GranularityDaily,
+			Gauge:       awsCostGauge,
+		},
+		{
+			Name:        "monthly",
+			Start:       time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()),
+			End:         now,
+			Granularity: types.GranularityMonthly,
+			Gauge:       awsMonthlyCostGauge,
+		},
+		{
+			Name:        "previous day",
+			Start:       now.AddDate(0, 0, -2),
+			End:         now.AddDate(0, 0, -1),
+			Granularity: types.GranularityDaily,
+			Gauge:       awsPreviousDayCostGauge,
+		},
+		{
+			Name:        "previous month",
+			Start:       time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -1, 0),
+			End:         time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()),
+			Granularity: types.GranularityMonthly,
+			Gauge:       awsPreviousMonthCostGauge,
+		},
 	}
 	
-	if err := e.updateMonthlyMetrics(ctx); err != nil {
-		return err
-	}
-	
-	if err := e.updatePreviousDayMetrics(ctx); err != nil {
-		return err
-	}
-	
-	if err := e.updatePreviousMonthMetrics(ctx); err != nil {
-		return err
+	for _, config := range configs {
+		if err := e.updateCostMetrics(ctx, config); err != nil {
+			return err
+		}
 	}
 	
 	return nil
