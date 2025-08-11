@@ -4,19 +4,23 @@ A Prometheus exporter that collects AWS cost and usage data from AWS Cost Explor
 
 ## Features
 
-- **Daily Cost Metrics**: Yesterday's AWS costs by service and region
-- **Monthly Cost Metrics**: Month-to-date AWS costs by service and region  
+- **Daily Cost Metrics**: Today's AWS costs up until now by service and region
+- **Monthly Cost Metrics**: Month-to-date AWS costs by service and region
+- **Previous Day Cost Metrics**: Complete previous day AWS costs (stable data) 
+- **Previous Month Cost Metrics**: Complete previous month AWS costs (stable data)
 - **Prometheus Integration**: Exposes metrics at `/metrics` endpoint
 - **Health Check**: Health endpoint at `/health`
-- **Automatic Updates**: Metrics refresh every hour
+- **Automatic Updates**: Metrics refresh every 6 hours
 - **Comprehensive Logging**: Detailed logging for monitoring and debugging
 
 ## Metrics
 
 | Metric Name | Type | Description | Labels |
 |-------------|------|-------------|---------|
-| `aws_daily_cost_usd` | Gauge | Daily AWS cost in USD | `service`, `region` |
-| `aws_monthly_cost_usd` | Gauge | Monthly AWS cost in USD | `service`, `region` |
+| `aws_daily_cost_usd` | Gauge | Today's AWS cost in USD up until now (current data) | `service`, `region` |
+| `aws_monthly_cost_usd` | Gauge | Month-to-date AWS cost in USD (current data) | `service`, `region` |
+| `aws_previous_day_cost_usd` | Gauge | Complete previous day AWS cost in USD (stable data) | `service`, `region` |
+| `aws_previous_month_cost_usd` | Gauge | Complete previous month AWS cost in USD (stable data) | `service`, `region` |
 
 ## Prerequisites
 
